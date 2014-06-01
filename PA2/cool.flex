@@ -12,6 +12,8 @@
 #include <stringtab.h>
 #include <utilities.h>
 #include <string.h>
+#include <ctype.h>
+#include <stdlib.h>
 
 /* The compiler assumes these identifiers. */
 #define yylval cool_yylval
@@ -46,6 +48,7 @@ extern YYSTYPE cool_yylval;
 
 %}
 %x INCOMMENT
+%x quote
 /*
  * Define names for regular expressions here.
  */
@@ -68,6 +71,7 @@ NEW	  (?i:new)
 ISVOID	  (?i:isvoid)
 STR_CONST  \"(\\\n|\\.|[^\"\\\n])*\"
 UNTER_STR_CONST \"([^\0\"\n\\]|\\.|\\\n)*\n
+QUOTE_BEGIN \"
 INT_CONST  [0-9]+
 BOOL_CONST t(?i:rue)|f(?i:alse)
 TYPEID	  [A-Z][A-Za-z_0-9]*
@@ -141,8 +145,14 @@ SPACES  [ \f\r\t\v]+
   *
   */
 
+<quote><<EOF>> {
+	        BEGIN 0;
+		yylval.error_msg="EOF in string constant";
+		return ERROR;
+		}
+{STR_CONST} {  
 
-{STR_CONST} {  int len = strlen(yytext);
+	       int len = strlen(yytext);
 	       int cnt=0;
 	       bool is_literal = false;
 	       for(int i=1;i<len-1;i++){
@@ -172,6 +182,12 @@ SPACES  [ \f\r\t\v]+
 			yylval.error_msg="Unterminated string constant";
 			return ERROR;
 			}
+
+{QUOTE_BEGIN} { BEGIN quote;
+	      }
+<quote>. {}
+
+		
 \*\)  	   {	yylval.error_msg = "Unmatched *)";
 		return ERROR;
 	   }  
