@@ -70,8 +70,10 @@ OF  (?i:of)
 DARROW          =>
 NEW	  (?i:new)
 ISVOID	  (?i:isvoid)
-STR_CONST  \"(\\\n|\\.|[^\"\\\n])*\"
-UNTER_STR_CONST \"([^\0\"\n\\]|\\.|\\\n)*\n
+STR_CONST  \"(\\\n|\\[^\0]|[^\"\\\n\0])*\"
+STR_CONST_WITH_NULL \"(\\\n|\\.|\0|[^\"\\\n])*\"
+UNTER_STR_CONST \"([^\0\"\n\\]|\\[^\0]|\\\n)*\n
+UNTER_STR_CONST_WITH_NULL \"([^\0\"\n\\]|\\.|\0|\\\n)*\n
 QUOTE_BEGIN \"
 INT_CONST  [0-9]+
 BOOL_CONST t(?i:rue)|f(?i:alse)
@@ -80,7 +82,7 @@ OBJECTID  [a-z][A-Za-z_0-9]*
 ASSIGN   <-
 NOT      (?i:not)
 LE	 <=
-CH  \;|\:|\,|\/|\=|\<|\.|\(|\)|\+|\-|\*|\~|\@|\{|\}
+CH  \'|\;|\:|\,|\/|\=|\<|\.|\(|\)|\+|\-|\*|\~|\@|\{|\}
 NEWLINE \n
 LINECOMMENT \-\-.*
 SPACES  [ \f\r\t\v]+
@@ -135,10 +137,10 @@ SPACES  [ \f\r\t\v]+
 {INT_CONST} { yylval.symbol = inttable.add_string(yytext);
 	      return INT_CONST;
  	     }
-{TYPEID}   {  yylval.symbol = inttable.add_string(yytext);
+{TYPEID}   {  yylval.symbol = idtable.add_string(yytext);
 	      return TYPEID;
 	      }
-{OBJECTID}  {yylval.symbol = inttable.add_string(yytext);
+{OBJECTID}  {yylval.symbol = idtable.add_string(yytext);
 	      return OBJECTID;
 	      } 
 {CH}    {return yytext[0];}
@@ -148,14 +150,17 @@ SPACES  [ \f\r\t\v]+
   *  \n \t \b \f, the result is c.
   *
   */
-
+<INCOMMENT><<EOF>> {	BEGIN 0;
+		   	yylval.error_msg="EOF in comment";
+			return ERROR;
+	           }
 <quote><<EOF>> {
 	        BEGIN 0;
 		yylval.error_msg="EOF in string constant";
 		return ERROR;
 		}
 {STR_CONST} {  
-
+	       
 	       int len = strlen(yytext);
 	       int cnt=0;
 	       bool is_literal = false;
@@ -175,18 +180,30 @@ SPACES  [ \f\r\t\v]+
 				}
 				else yytext[cnt-1]=yytext[i];
 		       }
+		       if(cnt>=MAX_STR_CONST) {
+		       		yylval.error_msg="String constant too long";
+				return ERROR;
+		       }
 	       }
 	       yytext[cnt]=0;
-	       yylval.symbol = inttable.add_string(yytext);
+	       yylval.symbol = stringtable.add_string(yytext);
 	       return STR_CONST; 
            }
+
+{STR_CONST_WITH_NULL} {
+			 yylval.error_msg="String contains null character";
+			 return ERROR;
+			 }
 
 {UNTER_STR_CONST}       {
 			curr_lineno ++;
 			yylval.error_msg="Unterminated string constant";
 			return ERROR;
 			}
-
+{UNTER_STR_CONST_WITH_NULL} {
+			 yylval.error_msg="String contains null character";
+			 return ERROR;
+			 }
 {QUOTE_BEGIN} { BEGIN quote;
 	      }
 <quote>. {}
