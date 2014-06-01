@@ -41,6 +41,7 @@ extern int curr_lineno;
 extern int verbose_flag;
 
 extern YYSTYPE cool_yylval;
+int nest_level = 0;
 
 /*
  *  Add Your own definitions here
@@ -89,7 +90,10 @@ SPACES  [ \f\r\t\v]+
   *  Nested comments
   */
 \(\*  {BEGIN INCOMMENT;}
-<INCOMMENT>\*\) {BEGIN 0;}
+<INCOMMENT>\(\* { nest_level ++;}
+<INCOMMENT>\*\) { if(!nest_level) BEGIN 0;
+		  else nest_level --;
+		}
 <INCOMMENT>\n {curr_lineno +=1;}
 <INCOMMENT>. {}
 
