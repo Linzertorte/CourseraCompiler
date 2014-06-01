@@ -67,7 +67,7 @@ DARROW          =>
 NEW	  (?i:new)
 ISVOID	  (?i:isvoid)
 STR_CONST  \"(\\\n|\\.|[^\"\\\n])*\"
-UNTER_STR_CONST \"([^\0\"\n\\]|\\[.\n])*\n
+UNTER_STR_CONST \"([^\0\"\n\\]|\\.|\\\n)*\n
 INT_CONST  [0-9]+
 BOOL_CONST t(?i:rue)|f(?i:alse)
 TYPEID	  [A-Z][A-Za-z_0-9]*
