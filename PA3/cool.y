@@ -135,14 +135,17 @@
     %type <class_> class
     %type <expression> expr
     %type <expressions> expr_list
+    %type <expression> let_expr
     %type <formal> formal
     %type <formals> formal_list extra_formals
+    %type <expressions> arg_list extra_args
     /* You will want to change the following line. */
     %type <features> feature_list
     %type <feature> feature
     %type <expression> optional_assign
     %type <case_> branch
     %type <cases> branch_list
+  
     /* Precedence declarations go here. */
     %right ASSIGN
     %nonassoc NOT
@@ -163,10 +166,13 @@
     : class			/* single class */
     { $$ = single_Classes($1);
     parse_results = $$; }
+    | error {$$=nil_Classes();}
     | class_list class	/* several classes */
     { $$ = append_Classes($1,single_Classes($2)); 
     parse_results = $$; }
-;
+    | class_list error
+    { $$ = $1;}
+    ;
     
     /* If no parent is specified, the class inherits from the Object class. */
     class	: CLASS TYPEID '{' feature_list '}' ';'
@@ -180,6 +186,7 @@
     feature_list:		/* empty */
     {  $$ = nil_Features(); }
     | feature_list feature ';' {$$ = append_Features($1,single_Features($2));}
+    | feature_list error ';' {$$ = $1;}
     ;
     feature:
     OBJECTID ':' TYPEID optional_assign
@@ -191,6 +198,16 @@
     formal_list:
     formal extra_formals {$$ = append_Formals(single_Formals($1),$2);}
     |  {$$ = nil_Formals();}
+    ;
+
+    arg_list: 
+    {$$ = nil_Expressions();}
+    | expr extra_args {$$ = append_Expressions(single_Expressions($1),$2);}
+    ;
+
+    extra_args:
+    {$$ = nil_Expressions();}
+    | extra_args ',' expr {$$=append_Expressions($1,single_Expressions($3));}
     ;
 
     formal:
@@ -207,7 +224,9 @@
     ;
 
     expr:
-    expr '.' OBJECTID '(' ')' {$$=dispatch($1,$3,nil_Expressions());}
+    expr '.' OBJECTID '(' arg_list ')' {$$=dispatch($1,$3,$5);}
+    |expr '@' TYPEID '.' OBJECTID '(' arg_list ')' {$$=static_dispatch($1,$3,$5,$7);}
+    | OBJECTID '(' arg_list ')' {$$=dispatch(object(idtable.add_string("self")), $1,$3);}
     | INT_CONST {$$=int_const($1);}
     | BOOL_CONST { $$ = bool_const($1);}
     | OBJECTID { $$=object($1);}
@@ -228,11 +247,19 @@
     | '(' expr ')' { $$ = $2;}
     | NOT expr { $$ = comp($2);}
     | ISVOID expr { $$ = isvoid($2);}
-    | LET OBJECTID ':' TYPEID  IN expr { $$=let($2,$4,no_expr(),$6);}
-    | LET OBJECTID ':' TYPEID ASSIGN expr IN expr { $$=let($2,$4,$6,$8);}
+    | LET OBJECTID ':' TYPEID optional_assign let_expr { $$=let($2,$4,$5,$6);}
+    | LET error let_expr {$$ = $3;}
     | NEW TYPEID {$$ = new_($2);}
     | '{' expr_list expr ';' '}' {$$ = block(append_Expressions($2,single_Expressions($3)));}
-    ;
+    | '{' expr_list error  '}' {$$ = block($2);}
+    | '{' expr_list error ';' '}' {$$ = block($2);}
+    ;    /* some error recover here */
+
+    let_expr:
+    IN expr {$$=$2;}
+    | ',' OBJECTID ':' TYPEID optional_assign let_expr {$$=let($2,$4,$5,$6);}
+    | error let_expr {$$ = $2;}
+     
      branch:
      OBJECTID ':' TYPEID DARROW expr {$$ = branch($1,$3,$5);}
     
@@ -243,6 +270,8 @@
     expr_list:
     {$$=nil_Expressions();}
     | expr_list expr ';' {$$=append_Expressions($1,single_Expressions($2));}
+    | expr_list error  { $$ = $1;}
+    | expr_list error ';' { $$ = $1;}
     ;
     /* end of grammar */
     %%

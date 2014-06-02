@@ -134,16 +134,24 @@
     %type <classes> class_list
     %type <class_> class
     %type <expression> expr
+    %type <expressions> expr_list
     %type <formal> formal
     %type <formals> formal_list extra_formals
-    
     /* You will want to change the following line. */
     %type <features> feature_list
     %type <feature> feature
     %type <expression> optional_assign
+    %type <case_> branch
+    %type <cases> branch_list
     /* Precedence declarations go here. */
-    
-    
+    %right ASSIGN
+    %nonassoc NOT
+    %nonassoc '<' LE '='
+    %left '+' '-'
+    %left '*' '/'
+    %nonassoc ISVOID
+    %nonassoc '~'
+
     %%
     /* 
     Save the root of the abstract syntax tree in a global variable.
@@ -158,7 +166,7 @@
     | class_list class	/* several classes */
     { $$ = append_Classes($1,single_Classes($2)); 
     parse_results = $$; }
-    ;
+;
     
     /* If no parent is specified, the class inherits from the Object class. */
     class	: CLASS TYPEID '{' feature_list '}' ';'
@@ -199,11 +207,42 @@
     ;
 
     expr:
-    INT_CONST {$$=int_const($1);}
+    expr '.' OBJECTID '(' ')' {$$=dispatch($1,$3,nil_Expressions());}
+    | INT_CONST {$$=int_const($1);}
+    | BOOL_CONST { $$ = bool_const($1);}
+    | OBJECTID { $$=object($1);}
+    | OBJECTID ASSIGN expr {$$=assign($1,$3);}
     | STR_CONST { $$=string_const($1);}
+    | CASE expr OF branch ';' branch_list ESAC
+    {$$ = typcase($2,append_Cases(single_Cases($4),$6));}
+    | WHILE expr LOOP expr POOL { $$=loop($2,$4);}
+    | IF expr THEN expr ELSE expr FI {$$=cond($2,$4,$6);}
     | expr '+' expr { $$=plus($1,$3);}
-    | LET OBJECTID ':' TYPEID IN expr { $$=let($2,$4,no_expr(),$6);}
+    | expr '-' expr { $$ = sub($1,$3);}
+    | expr '*' expr { $$ = mul($1,$3);}
+    | expr '/' expr { $$ = divide($1,$3);}
+    | expr LE expr { $$ = leq($1,$3);}
+    | expr '<' expr {$$ = lt($1,$3);}
+    | expr '=' expr {$$ = eq($1,$3);}
+    | '~' expr { $$ = neg($2);}
+    | '(' expr ')' { $$ = $2;}
+    | NOT expr { $$ = comp($2);}
+    | ISVOID expr { $$ = isvoid($2);}
+    | LET OBJECTID ':' TYPEID  IN expr { $$=let($2,$4,no_expr(),$6);}
+    | LET OBJECTID ':' TYPEID ASSIGN expr IN expr { $$=let($2,$4,$6,$8);}
     | NEW TYPEID {$$ = new_($2);}
+    | '{' expr_list expr ';' '}' {$$ = block(append_Expressions($2,single_Expressions($3)));}
+    ;
+     branch:
+     OBJECTID ':' TYPEID DARROW expr {$$ = branch($1,$3,$5);}
+    
+     branch_list:
+     {$$=nil_Cases();}
+     | branch_list branch ';' {$$=append_Cases($1,single_Cases($2));}
+    
+    expr_list:
+    {$$=nil_Expressions();}
+    | expr_list expr ';' {$$=append_Expressions($1,single_Expressions($2));}
     ;
     /* end of grammar */
     %%
