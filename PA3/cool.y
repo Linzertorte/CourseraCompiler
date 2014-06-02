@@ -218,7 +218,7 @@
     ;
 
     optional_assign:
-    {$$=no_expr();}
+    {node_lineno = 12; $$=no_expr();}
     | ASSIGN expr
     {$$ = $2;}
     ;
@@ -236,7 +236,7 @@
     {$$ = typcase($2,append_Cases(single_Cases($4),$6));}
     | WHILE expr LOOP expr POOL { $$=loop($2,$4);}
     | IF expr THEN expr ELSE expr FI {$$=cond($2,$4,$6);}
-    | expr '+' expr { $$=plus($1,$3);}
+    | expr '+' expr { @$ = @2;$$=plus($1,$3);}
     | expr '-' expr { $$ = sub($1,$3);}
     | expr '*' expr { $$ = mul($1,$3);}
     | expr '/' expr { $$ = divide($1,$3);}
@@ -256,10 +256,10 @@
     ;    /* some error recover here */
 
     let_expr:
-    IN expr {$$=$2;}
+    IN expr {@$=@2;$$=$2;}
     | ',' OBJECTID ':' TYPEID optional_assign let_expr {$$=let($2,$4,$5,$6);}
-    | error let_expr {$$ = $2;}
-     
+    | error let_expr { $$ = $2;}
+    ; 
      branch:
      OBJECTID ':' TYPEID DARROW expr {$$ = branch($1,$3,$5);}
     
@@ -289,5 +289,4 @@
       
       if(omerrs>50) {fprintf(stdout, "More than 50 errors\n"); exit(1);}
     }
-    
     
