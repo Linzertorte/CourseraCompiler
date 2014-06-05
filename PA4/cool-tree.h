@@ -11,6 +11,18 @@
 
 #include "tree.h"
 #include "cool-tree.handcode.h"
+#include "symtab.h"
+#include<map>
+
+class InheritanceGraph {
+public:
+    std::map<Symbol, Symbol> parent;
+    Symbol lub(Symbol, Symbol);
+    bool add_inheritance(Symbol, Symbol);
+    bool check_main_class();
+    bool is_well_formed();
+    bool attached(Symbol);
+};
 
 
 // define the class for phylum
@@ -43,7 +55,8 @@ public:
     virtual Class_ copy_Class_() = 0;
     virtual Symbol get_parent() = 0;
     virtual Symbol get_name() = 0;
-    virtual Symbol type_check() = 0;
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) = 0;
+    virtual SymbolTable<Symbol, Entry> * collect_attrs() = 0;
 #ifdef Class__EXTRAS
     Class__EXTRAS
 #endif
@@ -60,7 +73,8 @@ public:
         return copy_Feature();
     }
     virtual Feature copy_Feature() = 0;
-    virtual Symbol type_check() = 0;
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) = 0;
+    virtual void addid(SymbolTable<Symbol, Entry> *tbl) = 0;
 #ifdef Feature_EXTRAS
     Feature_EXTRAS
 #endif
@@ -77,7 +91,7 @@ public:
         return copy_Formal();
     }
     virtual Formal copy_Formal() = 0;
-
+    virtual void addarg(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) = 0;
 #ifdef Formal_EXTRAS
     Formal_EXTRAS
 #endif
@@ -87,7 +101,6 @@ public:
 // define simple phylum - Expression
 typedef class Expression_class *Expression;
 
-
 class Expression_class : public tree_node {
 public:
 
@@ -96,12 +109,13 @@ public:
     }
     virtual Expression copy_Expression() = 0;
 
-    virtual Symbol type_check(){
-        Symbol t =  idtable.add_string("Dummy");
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        Symbol t = idtable.add_string("Dummy");
         set_type(t);
         return t;
     }
-    virtual bool is_no_expr(){
+
+    virtual bool is_no_expr() {
         return false;
     }
 #ifdef Expression_EXTRAS
@@ -199,12 +213,21 @@ public:
     Symbol get_name() {
         return name;
     }
-    
-    virtual Symbol type_check(){
-        for(int i = features->first(); features->more(i) ; i=features->next(i)){
-            features->nth(i)->type_check();
+
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        for (int i = features->first(); features->more(i); i = features->next(i)) {
+            features->nth(i)->type_check(O, graph);
         }
         return name;
+    }
+
+    virtual SymbolTable<Symbol, Entry>* collect_attrs() {
+        SymbolTable<Symbol, Entry> *symtab = new SymbolTable<Symbol, Entry>();
+        symtab->enterscope();
+        for (int i = features->first(); features->more(i); i = features->next(i)) {
+            features->nth(i)->addid(symtab);
+        }
+        return symtab;
     }
 
 #ifdef Class__SHARED_EXTRAS
@@ -234,14 +257,22 @@ public:
     }
     Feature copy_Feature();
     void dump(ostream& stream, int n);
-    
 
-    virtual Symbol type_check(){
-        Symbol t = expr->type_check();
-	// set_type(t);
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        //enter scope
+        O->enterscope();
+        for (int i = formals->first(); formals->more(i); i = formals->next(i)) {
+            formals->nth(i)->addarg(O, graph);
+        }
+        Symbol t = expr->type_check(O, graph);
+        // exit_scope
+        O->exitscope();
         return t;
     }
 
+    virtual void addid(SymbolTable<Symbol, Entry> *tbl) {
+        return;
+    }
 
 #ifdef Feature_SHARED_EXTRAS
     Feature_SHARED_EXTRAS
@@ -269,13 +300,27 @@ public:
     Feature copy_Feature();
     void dump(ostream& stream, int n);
 
-    virtual Symbol type_check(){
-        if(init->is_no_expr()) return (Symbol)NULL;
-        Symbol t = init->type_check();
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        if (init->is_no_expr()) return (Symbol) NULL;
+        Symbol t = init->type_check(O, graph);
+        if (!t || graph->lub(t, type_decl) != type_decl) {
+            cerr << "filename:line " << endl;
+            cerr << "Compilation halted due to static semantic errors." << endl;
+            exit(1);
+        }
         //set_type(t);
         return t;
     }
 
+    virtual void addid(SymbolTable<Symbol, Entry>* tbl) {
+        if (name == idtable.add_string("self")) {
+            cerr << "filename:line " << endl;
+            cerr << "Compilation halted due to static semantic errors." << endl;
+            exit(1);
+        }
+        tbl->addid(name, type_decl);
+        return;
+    }
 
 #ifdef Feature_SHARED_EXTRAS
     Feature_SHARED_EXTRAS
@@ -301,6 +346,9 @@ public:
     Formal copy_Formal();
     void dump(ostream& stream, int n);
 
+    virtual void addarg(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        O->addid(name, type_decl);
+    }
 #ifdef Formal_SHARED_EXTRAS
     Formal_SHARED_EXTRAS
 #endif
@@ -350,9 +398,20 @@ public:
     }
     Expression copy_Expression();
     void dump(ostream& stream, int n);
-    
-    virtual Symbol type_check(){
-        Symbol t = expr->type_check();
+
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        Symbol t = expr->type_check(O, graph);
+        if (!t) {
+            cerr << "filename:line " << endl;
+            cerr << "Compilation halted due to static semantic errors." << endl;
+            exit(1);
+        }
+        Symbol t0 = O->lookup(name);
+        if (graph->lub(t, t0) != t0) {
+            cerr << "filename:line " << endl;
+            cerr << "Compilation halted due to static semantic errors." << endl;
+            exit(1);
+        }
         set_type(t);
         return t;
     }
@@ -462,6 +521,19 @@ public:
     Expression copy_Expression();
     void dump(ostream& stream, int n);
 
+    virtual Symbol type_check(SymbolTable<Symbol, Entry>* O, InheritanceGraph* graph) {
+        Symbol t1 = pred->type_check(O, graph);
+        Symbol t2 = body->type_check(O, graph);
+        if (t1 != idtable.add_string("Bool")) {
+            cerr << "filename:line " << endl;
+            cerr << "Compilation halted due to static semantic errors." << endl;
+            exit(1);
+        }
+        set_type(t2);
+        return t2;
+    }
+
+
 #ifdef Expression_SHARED_EXTRAS
     Expression_SHARED_EXTRAS
 #endif
@@ -507,14 +579,13 @@ public:
     }
     Expression copy_Expression();
     void dump(ostream& stream, int n);
-    
 
-    virtual Symbol type_check(){
-        Symbol t = (Symbol)NULL;
-        for(int i=body->first(); body->more(i); i=body->next(i)){
-            t = body->nth(i)->type_check();
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        Symbol t = (Symbol) NULL;
+        for (int i = body->first(); body->more(i); i = body->next(i)) {
+            t = body->nth(i)->type_check(O, graph);
         }
-	set_type(t);
+        set_type(t);
         return t;
     }
 
@@ -570,6 +641,19 @@ public:
     }
     Expression copy_Expression();
     void dump(ostream& stream, int n);
+
+    virtual Symbol type_check(SymbolTable<Symbol, Entry>* O, InheritanceGraph* graph) {
+        Symbol t1 = e1->type_check(O, graph);
+        Symbol t2 = e2->type_check(O, graph);
+        if (t1 != t2) {
+            cerr << "filename:line " << endl;
+            cerr << "Compilation halted due to static semantic errors." << endl;
+            exit(1);
+        }
+        set_type(t1);
+        return t1;
+    }
+
 
 #ifdef Expression_SHARED_EXTRAS
     Expression_SHARED_EXTRAS
@@ -689,6 +773,13 @@ public:
     Expression copy_Expression();
     void dump(ostream& stream, int n);
 
+    virtual Symbol type_check(SymbolTable<Symbol, Entry>* O, InheritanceGraph* graph) {
+        Symbol t1 = e1->type_check(O, graph);
+        Symbol t2 = e2->type_check(O, graph);
+        set_type(idtable.add_string("Bool"));
+        return idtable.add_string("Bool");
+    }
+
 #ifdef Expression_SHARED_EXTRAS
     Expression_SHARED_EXTRAS
 #endif
@@ -712,6 +803,18 @@ public:
     }
     Expression copy_Expression();
     void dump(ostream& stream, int n);
+
+    virtual Symbol type_check(SymbolTable<Symbol, Entry>* O, InheritanceGraph* graph) {
+        Symbol t1 = e1->type_check(O, graph);
+        Symbol t2 = e2->type_check(O, graph);
+        if (t1 != t2) {
+            cerr << "filename:line " << endl;
+            cerr << "Compilation halted due to static semantic errors." << endl;
+            exit(1);
+        }
+        set_type(t1);
+        return t1;
+    }
 
 #ifdef Expression_SHARED_EXTRAS
     Expression_SHARED_EXTRAS
@@ -737,6 +840,12 @@ public:
     Expression copy_Expression();
     void dump(ostream& stream, int n);
 
+    virtual Symbol type_check(SymbolTable<Symbol, Entry>* O, InheritanceGraph* graph) {
+        Symbol t1 = e1->type_check(O, graph);
+        Symbol t2 = e2->type_check(O, graph);
+        set_type(idtable.add_string("Bool"));
+        return idtable.add_string("Bool");
+    }
 #ifdef Expression_SHARED_EXTRAS
     Expression_SHARED_EXTRAS
 #endif
@@ -759,6 +868,11 @@ public:
     Expression copy_Expression();
     void dump(ostream& stream, int n);
 
+    virtual Symbol type_check(SymbolTable<Symbol, Entry>* O, InheritanceGraph* graph) {
+        e1->type_check(O, graph);
+        set_type(idtable.add_string("Bool"));
+        return idtable.add_string("Bool");
+    }
 #ifdef Expression_SHARED_EXTRAS
     Expression_SHARED_EXTRAS
 #endif
@@ -782,8 +896,8 @@ public:
     Expression copy_Expression();
     void dump(ostream& stream, int n);
 
-    virtual Symbol type_check() {
-      Symbol t = idtable.add_string("Int");
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        Symbol t = idtable.add_string("Int");
         set_type(t);
         return t;
     }
@@ -810,8 +924,9 @@ public:
     }
     Expression copy_Expression();
     void dump(ostream& stream, int n);
-    virtual Symbol type_check(){
-      Symbol t = idtable.add_string("Bool");
+
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        Symbol t = idtable.add_string("Bool");
         set_type(t);
         return t;
     }
@@ -839,7 +954,7 @@ public:
     Expression copy_Expression();
     void dump(ostream& stream, int n);
 
-    virtual Symbol type_check() {
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
         Symbol t = idtable.add_string("String");
         set_type(t);
         return t;
@@ -866,9 +981,10 @@ public:
     }
     Expression copy_Expression();
     void dump(ostream& stream, int n);
-    virtual Symbol type_check(){
-      set_type(type_name);
-      return type_name;
+
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        set_type(type_name);
+        return type_name;
     }
 
 #ifdef Expression_SHARED_EXTRAS
@@ -912,7 +1028,8 @@ public:
     }
     Expression copy_Expression();
     void dump(ostream& stream, int n);
-    virtual bool is_no_expr(){
+
+    virtual bool is_no_expr() {
         return true;
     }
 #ifdef Expression_SHARED_EXTRAS
@@ -936,8 +1053,9 @@ public:
     }
     Expression copy_Expression();
     void dump(ostream& stream, int n);
-    virtual Symbol type_check(){
-      return name;
+
+    virtual Symbol type_check(SymbolTable<Symbol, Entry> *O, InheritanceGraph* graph) {
+        return O->lookup(name);
     }
 
 #ifdef Expression_SHARED_EXTRAS

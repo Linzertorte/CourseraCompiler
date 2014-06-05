@@ -8,6 +8,7 @@
 #include "symtab.h"
 #include "list.h"
 #include <map>
+#include <set>
 
 
 #define TRUE 1
@@ -26,11 +27,10 @@ private:
   int semant_errors;
   void install_basic_classes();
   ostream& error_stream;
-  std::map<Symbol,Symbol> parent;
+  InheritanceGraph graph;
+ 
 public:
-  ClassTable(Classes);
-  void add_inheritance(Symbol,Symbol,Class_);
-  bool check_main_class();
+  ClassTable(Classes); 
   int errors() { return semant_errors; }
   ostream& semant_error();
   ostream& semant_error(Class_ c);
