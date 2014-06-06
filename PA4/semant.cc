@@ -12,6 +12,13 @@
 extern int semant_debug;
 extern char *curr_filename;
 
+
+
+
+
+
+
+
 //////////////////////////////////////////////////////////////////////
 //
 // Symbols
@@ -37,7 +44,6 @@ Main,
 main_meth,
 No_class,
 No_type,
-Object,
 out_int,
 out_string,
 prim_slot,
@@ -70,7 +76,7 @@ static void initialize_constants(void) {
     //   user-defined class.
     No_class = idtable.add_string("_no_class");
     No_type = idtable.add_string("_no_type");
-    Object = idtable.add_string("Object");
+    //Object = idtable.add_string("Object");
     out_int = idtable.add_string("out_int");
     out_string = idtable.add_string("out_string");
     prim_slot = idtable.add_string("_prim_slot");
@@ -81,10 +87,6 @@ static void initialize_constants(void) {
     substr = idtable.add_string("substr");
     type_name = idtable.add_string("type_name");
     val = idtable.add_string("_val");
-}
-
-Symbol class__class::get_parent() {
-    return parent;
 }
 
 Symbol InheritanceGraph::lub(Symbol x, Symbol y) {
@@ -99,43 +101,17 @@ Symbol InheritanceGraph::lub(Symbol x, Symbol y) {
     }
 
 }
-
-ClassTable::ClassTable(Classes classes) : semant_errors(0), error_stream(cerr) {
-
-    /* Fill this in */
-
-    // zliu begin
-    install_basic_classes();
-    Classes l = classes;
-    for (int i = l->first(); l->more(i); i = l->next(i)) {
-
-        if(!graph.add_inheritance(l->nth(i)->get_name(), l->nth(i)->get_parent())){
-            semant_error(l->nth(i));
-            cerr<<endl;
-            semant_errors ++;
-            return;
-        }
-    }
-
-     if (!graph.check_main_class()) {
-        semant_errors ++;
-        cerr << "Class Main is not defined." << endl;
-        return;
-    }
-    if(!graph.is_well_formed()){
-        semant_errors ++;
-        cerr <<"filename:line"<<endl;
-        return;
-    }
-    for (int i = l->first(); l->more(i); i = l->next(i)) {
-        SymbolTable<Symbol, Entry> *tbl = l->nth(i)->collect_attrs();
-       // tbl->dump();
-        l->nth(i)->type_check(tbl, &graph);
-    }
-
-   
-    //zliu end
-
+bool InheritanceGraph::has_a(Symbol t){
+    Symbol SELF_TYPE = idtable.add_string("SELF_TYPE");
+    return t == SELF_TYPE || parent.find(t)!=parent.end();
+}
+bool InheritanceGraph::is_sub(Symbol a, Symbol b, Symbol c){
+    Symbol SELF_TYPE = idtable.add_string("SELF_TYPE");
+    if(!has_a(a) || !has_a(b)) Report::panic("undefined type");
+    if(a==b && a == SELF_TYPE) return true;
+    if(b==SELF_TYPE) return false;
+    if(a==SELF_TYPE) return lub(c,b)==b;
+    return lub(a,b) == b;
 }
 
 bool InheritanceGraph::check_main_class() {
@@ -145,22 +121,26 @@ bool InheritanceGraph::check_main_class() {
 
 bool InheritanceGraph::add_inheritance(Symbol sub, Symbol sup) {
 
-    if (parent.find(sub) != parent.end() || sub == Object)
+    if (parent.find(sub) != parent.end()) {
+        Report::panic("Redefined a class");
         return false;
-    if(sup == Bool || sup == Int || sup == Str || sup == SELF_TYPE){
+    }
+    if (sup == Bool || sup == Int || sup == Str || sup == SELF_TYPE) {
+        Report::panic("Extends reserved type");
         return false;
     }
     parent[sub] = sup;
     return true;
 }
-bool InheritanceGraph::attached(Symbol c){
+
+bool InheritanceGraph::attached(Symbol c) {
     std::set<Symbol> path;
-    while(c!=Object){
-        if(path.find(c)!=path.end()){
+    while (c != Object) {
+        if (path.find(c) != path.end()) {
             //find a cycle
             return false;
         }
-        if(parent.find(c)==parent.end()){
+        if (parent.find(c) == parent.end()) {
             //broken 
             return false;
         }
@@ -169,14 +149,36 @@ bool InheritanceGraph::attached(Symbol c){
     }
     return true;
 }
+
 bool InheritanceGraph::is_well_formed() {
     //every class is attached to Object eventually.
     //no cycle
-    std::map<Symbol,Symbol>::iterator it;
-    for(it = parent.begin(); it!=parent.end() ;it++){
-        if(!attached(it->first)) return false;
+    if (!check_main_class()) {
+        cerr<<"Class Main is not defined."<<endl;
+        cerr<<"Compilation halted due to static semantic errors."<<endl;
+        exit(1);
+    }
+    if(parent.find(SELF_TYPE)!=parent.end()) Report::panic("SELF_TYPE defined");
+    std::map<Symbol, Symbol>::iterator it;
+    for (it = parent.begin(); it != parent.end(); it++) {
+        if (!attached(it->first)) {
+            Report::panic("class graph not well formed");
+            return false;
+        }
     }
     return true;
+}
+
+ClassTable::ClassTable(Classes classes) : semant_errors(0), error_stream(cerr) {
+
+    /* Fill this in */
+
+   
+    install_basic_classes();
+
+
+   
+
 }
 
 void ClassTable::install_basic_classes() {
@@ -281,10 +283,13 @@ void ClassTable::install_basic_classes() {
 
 
     // zliu's code start 
-    graph.add_inheritance(Str,Object);
-    graph.add_inheritance(Int, Object);
-    graph.add_inheritance(Bool, Object);
-    graph.add_inheritance(IO, Object);
+
+    basic_classes =
+            append_Classes(single_Classes(IO_class),
+            append_Classes(single_Classes(Object_class),
+            append_Classes(single_Classes(Str_class),
+            append_Classes(single_Classes(Bool_class),
+            single_Classes(Int_class)))));
 
     //zliu's code end
 
@@ -307,19 +312,21 @@ void ClassTable::install_basic_classes() {
 ///////////////////////////////////////////////////////////////////
 
 ostream& ClassTable::semant_error(Class_ c) {
+
     return semant_error(c->get_filename(), c);
 }
 
 ostream& ClassTable::semant_error(Symbol filename, tree_node *t) {
     error_stream << filename << ":" << t->get_line_number() << ": ";
+
     return semant_error();
 }
 
 ostream& ClassTable::semant_error() {
     semant_errors++;
+
     return error_stream;
 }
-
 /*   This is the entry point to the semantic checker.
 
      Your checker should do the following two things:
@@ -333,6 +340,8 @@ ostream& ClassTable::semant_error() {
      errors. Part 2) can be done in a second stage, when you want
      to build mycoolc.
  */
+
+
 void program_class::semant() {
     initialize_constants();
     /* ClassTable constructor may do some semantic analysis */
@@ -340,6 +349,37 @@ void program_class::semant() {
 
     /* some semantic analysis code may go here */
     //Classes l = classes;
+    IdVisitor *visitor = new IdVisitor();
+    InheritanceGraph *graph = new InheritanceGraph();
+    ClassScopes *clx_scopes = new ClassScopes();
+    M_Env *m_env = new M_Env();
+    for (int i = classtable->basic_classes->first(); classtable->basic_classes->more(i); i = classtable->basic_classes->next(i)) {
+        classtable->basic_classes->nth(i)->accept(visitor);
+        graph->add_inheritance(visitor->name, visitor->parent);
+        clx_scopes->add_scope(visitor->name, visitor->attrs);
+        m_env->add_methods(visitor->name, visitor->methods);
+        visitor->clear();
+    }
+    for (int i = classes->first(); classes->more(i); i = classes->next(i)) {
+
+        classes->nth(i)->accept(visitor);
+        graph->add_inheritance(visitor->name, visitor->parent);
+        clx_scopes->add_scope(visitor->name, visitor->attrs);
+        m_env->add_methods(visitor->name, visitor->methods);
+        visitor->clear();
+    }
+    graph->is_well_formed();
+    clx_scopes->inherits(graph);
+    m_env->inherits(graph);
+    //m_env->dump();
+    
+    TypeVisitor *t_v = new TypeVisitor();
+    for (int i = classes->first(); classes->more(i); i = classes->next(i)) {
+        t_v->init(clx_scopes, m_env, graph);
+        classes->nth(i)->accept(t_v);
+    }
+
+    //clx scope now is almost done. 
 
 
     if (classtable->errors()) {
