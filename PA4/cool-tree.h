@@ -1924,7 +1924,7 @@ public:
     }
 
     virtual Symbol visit(cond_class * x) {
-
+       
         Symbol t1 = x->pred->accept(this);
         Symbol t2 = x->then_exp->accept(this);
         Symbol t3 = x->else_exp->accept(this);

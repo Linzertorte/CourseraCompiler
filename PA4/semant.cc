@@ -90,6 +90,9 @@ static void initialize_constants(void) {
 }
 
 Symbol InheritanceGraph::lub(Symbol x, Symbol y) {
+    Symbol SELF_TYPE = idtable.add_string("SELF_TYPE");
+    if(x==SELF_TYPE) return y;
+    if(y==SELF_TYPE) return x;
     std::set<Symbol> path;
     while (x != Object) path.insert(x), x = parent[x];
     path.insert(Object);
