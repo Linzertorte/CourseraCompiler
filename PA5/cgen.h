@@ -56,29 +56,23 @@ public:
 };
 class AttrTable{
 public:
-    std::map<Symbol, std::vector<Symbol> > tbl;
+    std::map<Symbol, std::vector<std::pair<Symbol,Symbol> > > tbl;
     void inherit_attrs_from_parent(Symbol cls, Symbol parent){
-        if(!parent) tbl[cls] = std::vector<Symbol>();
+        if(!parent) tbl[cls] = std::vector<std::pair<Symbol,Symbol> >();
         else tbl[cls] = tbl[parent];
     }
-    void add_attr(Symbol cls, Symbol attr){
-        tbl[cls].push_back(attr);
+    void add_attr(Symbol cls, Symbol attr, Symbol t){
+        tbl[cls].push_back(std::make_pair(attr,t));
     }
+    
+    //search backward
     int index_of(Symbol cls, Symbol attr){
-        for(size_t i = 0; i < tbl[cls].size(); i++){
-            if(tbl[cls][i] == attr){
+        for(int i = tbl[cls].size(); i >= 0; i--){
+            if(tbl[cls][i].first == attr){
                 return i;
             }
         }
         return -1;
-    }
-    void dump(){
-        std::map<Symbol, std::vector<Symbol> >::iterator i;
-        for(i = tbl.begin(); i!=tbl.end(); i++){
-            cout<<i->first<<endl<<"-------------"<<endl;
-            for(size_t j = 0;j < (i->second).size(); j++)
-                cout<<(i->second)[j]<<endl;
-        }
     }
 };
 class ClassTag{
@@ -108,6 +102,30 @@ public:
         return tbl[i];
     }
 };
+class SymTab{
+public:
+    std::vector<Symbol> attrs;
+    std::vector<Symbol> args;
+    std::vector<Symbol> bindings;
+    void init(const std::vector<std::pair<Symbol,Symbol> > &a){
+        attrs.clear();
+        args.clear();
+        bindings.clear();
+        for(size_t i = 0;i<a.size();i++)
+            attrs.push_back(a[i].first);
+    }
+    
+    //assume it will always found the Symbol
+    // the first number is priority 
+    std::pair<int, int> lookup(Symbol s){
+        for(int i=bindings.size()-1; i>=0 ; i--)
+            if(bindings[i]==s) return std::make_pair(2,i);
+        for(size_t i=0 ; i<args.size() ;i++)
+            if(args[i]==s) return std::make_pair(1,args.size()-1-i);
+        for(size_t i=0 ; i<attrs.size() ;i++)
+            if(attrs[i]==s) return std::make_pair(0,i);
+    }
+};
 class CgenClassTable : public SymbolTable<Symbol,CgenNode> {
 private:
    List<CgenNode> *nds;
@@ -127,7 +145,11 @@ private:
    void code_constants();
    void code_disp_table();
    void code_class_name_table();
+   void code_class_obj_table();
    void code_prot_obj();
+   void code_default_value_for_type(Symbol);
+   void code_init_dfs(CgenNodeP root);
+   void code_methods_dfs(CgenNodeP);
 
 // The following creates an inheritance graph from
 // a list of classes.  The graph is implemented as
@@ -146,6 +168,7 @@ public:
    MethodTable method_table;
    AttrTable attr_table;
    ClassTag class_tag;
+   SymTab cur_symtab;
    void dfs(CgenNodeP root);
 };
 
