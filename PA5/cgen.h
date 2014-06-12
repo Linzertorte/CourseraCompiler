@@ -104,26 +104,34 @@ public:
 };
 class SymTab{
 public:
-    std::vector<Symbol> attrs;
-    std::vector<Symbol> args;
-    std::vector<Symbol> bindings;
+    std::vector<std::pair<Symbol,Symbol> > attrs;
+    std::vector<std::pair<Symbol,Symbol> >  args;
+    std::vector<std::pair<Symbol,Symbol> >  bindings;
     void init(const std::vector<std::pair<Symbol,Symbol> > &a){
         attrs.clear();
         args.clear();
         bindings.clear();
         for(size_t i = 0;i<a.size();i++)
-            attrs.push_back(a[i].first);
+            attrs.push_back(a[i]);
     }
     
     //assume it will always found the Symbol
     // the first number is priority 
     std::pair<int, int> lookup(Symbol s){
         for(int i=bindings.size()-1; i>=0 ; i--)
-            if(bindings[i]==s) return std::make_pair(2,i);
+            if(bindings[i].first==s) return std::make_pair(2,i);
         for(size_t i=0 ; i<args.size() ;i++)
-            if(args[i]==s) return std::make_pair(1,args.size()-1-i);
+            if(args[i].first==s) return std::make_pair(1,args.size()-1-i);
         for(size_t i=0 ; i<attrs.size() ;i++)
-            if(attrs[i]==s) return std::make_pair(0,i);
+            if(attrs[i].first==s) return std::make_pair(0,i);
+    }
+    Symbol get_type(Symbol s){
+        for(int i=bindings.size()-1; i>=0 ; i--)
+            if(bindings[i].first==s) return bindings[i].second;
+        for(size_t i=0 ; i<args.size() ;i++)
+            if(args[i].first==s) return args[i].second;
+        for(size_t i=0 ; i<attrs.size() ;i++)
+            if(attrs[i].first==s) return attrs[i].second;
     }
 };
 class CgenClassTable : public SymbolTable<Symbol,CgenNode> {
@@ -147,7 +155,7 @@ private:
    void code_class_name_table();
    void code_class_obj_table();
    void code_prot_obj();
-   void code_default_value_for_type(Symbol);
+   
    void code_init_dfs(CgenNodeP root);
    void code_methods_dfs(CgenNodeP);
 
@@ -170,6 +178,7 @@ public:
    ClassTag class_tag;
    SymTab cur_symtab;
    void dfs(CgenNodeP root);
+   void code_default_value_for_type(Symbol);
 };
 
 

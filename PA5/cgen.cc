@@ -372,11 +372,12 @@ static void emit_method_intro(ostream &str) {
     emit_addiu("$fp", "$sp", 4, str);
     emit_move("$s0", "$a0", str);
 }
-static void emit_method_after(int offset, ostream &str){
+
+static void emit_method_after(int offset, ostream &str) {
     emit_load("$fp", 3, "$sp", str);
     emit_load("$s0", 2, "$sp", str);
     emit_load("$ra", 1, "$sp", str);
-    emit_addiu("$sp", "$sp", 12+offset*4, str);
+    emit_addiu("$sp", "$sp", 12 + offset * 4, str);
     emit_jalr("$ra", str);
 }
 ///////////////////////////////////////////////////////////////////////////////
@@ -940,9 +941,19 @@ void CgenClassTable::code_init_dfs(CgenNodeP root) {
     if (name != Object) {
         str << JAL << root->get_parent() << "_init" << endl;
     }
+
+    for (int i = root->features->first(); root->features->more(i); i = root->features->next(i)) {
+        attr_class *a = dynamic_cast<attr_class *> (root->features->nth(i));
+        if (a) {
+            int offset = attr_table.index_of(root->get_name(), a->name) + 3;
+            emit_load("$a0", offset, "$s0", str);
+            a->init->code(str);
+            emit_store("$a0", offset, "$s0", str);
+        }
+    }
     emit_move("$a0", "$s0", str);
     emit_method_after(0, str);
-    
+
     for (List<CgenNode> *l = root->get_children(); l; l = l->tl()) {
         code_init_dfs(l->hd());
     }
@@ -950,6 +961,7 @@ void CgenClassTable::code_init_dfs(CgenNodeP root) {
 }
 static StringEntry* filename = NULL;
 static Symbol cur_class = NULL;
+
 void CgenClassTable::code_methods_dfs(CgenNodeP root) {
     filename = stringtable.add_string(root->get_filename()->get_string());
     cur_class = root->get_name();
@@ -960,12 +972,13 @@ void CgenClassTable::code_methods_dfs(CgenNodeP root) {
             if (m) {
                 str << root->get_name() << "." << m->name << LABEL;
                 for (int j = m->formals->first(); m->formals->more(j); j = m->formals->next(j)) {
-                    cur_symtab.args.push_back(dynamic_cast<formal_class *> (m->formals->nth(j))->name);
+                    cur_symtab.args.push_back(std::make_pair(dynamic_cast<formal_class *> (m->formals->nth(j))->name,\
+                                                                dynamic_cast<formal_class *> (m->formals->nth(j))->type_decl));
                 }
                 // then generate code for the expr
                 emit_method_intro(str);
                 m->expr->code(str);
-                emit_method_after(cur_symtab.args.size(),str);
+                emit_method_after(cur_symtab.args.size(), str);
             }
         }
     }
@@ -1037,37 +1050,64 @@ basic_status(bstatus) {
 //
 //*****************************************************************
 static int label_cnt = -1;
+static int case_cnt = -1;
+
 void assign_class::code(ostream &s) {
     //name <- expr
     expr->code(s);
-    std::pair<int,int> r = cgen_ctx->cur_symtab.lookup(name);
-    if(r.first==1){
-        emit_store(ACC, r.second+3, "$fp", s);
-    }else if(r.first==2){
-        emit_store(ACC, r.second+1, "$fp", s);
+    std::pair<int, int> r = cgen_ctx->cur_symtab.lookup(name);
+    if (r.first == 0) {
+        emit_store(ACC, r.second + 3, "$s0", s);
+    } else if (r.first == 1) {
+        emit_store(ACC, r.second + 3, "$fp", s);
+    } else if (r.first == 2) {
+        emit_store(ACC, -r.second - 1, "$fp", s);
     }
 }
 
 void static_dispatch_class::code(ostream &s) {
+
+    //push actual parameters on the stack
+    for (int i = actual->first(); actual->more(i); i = actual->next(i)) {
+        actual->nth(i)->code(s);
+        emit_push(ACC, s);
+    }
+
+    emit_move("$a0", "$s0", s); //initialize self
+    expr->code(s); //the expr can replace self
+    emit_bne("$a0", "$zero", ++label_cnt, s);
+    emit_load_string("$a0", filename, s);
+    emit_load_imm("$t1", 1, s);
+    emit_jal("_dispatch_abort", s);
+    emit_label_def(label_cnt, s);
+    s << LA << "$t1 " << type_name << "_dispTab" << endl;
+    int offset = cgen_ctx->method_table.index_of(type_name, name);
+    emit_load("$t1", offset, "$t1", s);
+    emit_jalr("$t1", s);
 }
 
 void dispatch_class::code(ostream &s) {
     //push actual parameters on the stack
-    for(int i=actual->first(); actual->more(i) ;i=actual->next(i)){
+    for (int i = actual->first(); actual->more(i); i = actual->next(i)) {
         actual->nth(i)->code(s);
-        emit_push(ACC,s);
+        emit_push(ACC, s);
     }
+
     emit_move("$a0", "$s0", s); //initialize self
-    emit_bne("$a0","$zero",++label_cnt,s);
-    emit_load_string("$a0", filename,s);
+    expr->code(s); //the expr can replace self
+    emit_bne("$a0", "$zero", ++label_cnt, s);
+    emit_load_string("$a0", filename, s);
     emit_load_imm("$t1", 1, s);
-    emit_jal("_dispatch_abort",s);
-    emit_label_def(label_cnt,s);
-    emit_load("$t1", 2, "$a0",s);
-    int offset = cgen_ctx->method_table.index_of(cur_class, name);
-    emit_load("$t1", offset, "$t1",s);
-    emit_jalr("$t1",s);
-    
+    emit_jal("_dispatch_abort", s);
+    emit_label_def(label_cnt, s);
+    emit_load("$t1", 2, "$a0", s);
+    int offset;
+
+    if (expr->type == SELF_TYPE || expr->type == No_type) offset = cgen_ctx->method_table.index_of(cur_class, name);
+    else offset = cgen_ctx->method_table.index_of(expr->type, name);
+    emit_load("$t1", offset, "$t1", s);
+    emit_jalr("$t1", s);
+
 }
 
 void cond_class::code(ostream &s) {
@@ -1076,33 +1116,87 @@ void cond_class::code(ostream &s) {
     pred->code(s);
     int else_l = ++label_cnt;
     int endif_l = ++label_cnt;
-    emit_load("$t1", 3, "$a0",s); //get the value of Bool
-    s<<BEQZ<<"$t1"<<"  ";
-    emit_label_ref(else_l,s);
-    s<<endl;
+    emit_load("$t1", 3, "$a0", s); //get the value of Bool
+    s << BEQZ << "$t1" << "  ";
+    emit_label_ref(else_l, s);
+    s << endl;
     then_exp->code(s);
-    emit_branch(endif_l,s);
-    emit_label_def(else_l,s);
+    emit_branch(endif_l, s);
+    emit_label_def(else_l, s);
     else_exp->code(s);
-    emit_label_def(endif_l,s);
+    emit_label_def(endif_l, s);
 }
 
 void loop_class::code(ostream &s) {
+    int begin = ++label_cnt;
+    int end = ++label_cnt;
+    emit_label_def(begin, s);
+    pred->code(s);
+    emit_load("$t1", 3, "$a0", s); //get the value of Bool
+    s << BEQZ << "$t1" << "  "; //if false
+    emit_label_ref(end, s);
+    s << endl;
+    body->code(s);
+    emit_branch(begin, s);
+    emit_label_def(end, s);
+
 }
 
 void typcase_class::code(ostream &s) {
+    expr->code(s);
+    int label_base = label_cnt + 1;
+    label_cnt += cases->len() + 2;
+    int label_last = label_cnt;
+    s << BNE << ACC << " " << "$zero  ";
+    emit_label_ref(label_base, s);
+    s << endl;
+
+    emit_load_string(ACC, filename, s);
+    emit_load_imm("$t1", 1, s);
+    emit_jal("_case_abort2", s);
+
+    for (int i = cases->first(), j = 0; cases->more(i); i = cases->next(i), j++) {
+        branch_class * branch = dynamic_cast<branch_class *> (cases->nth(i));
+        emit_label_def(label_base + j, s);
+        if (!j) emit_load("$t2", 0, "$a0", s); //classtag is in $t2
+        int tag = cgen_ctx->class_tag.index_of(branch->type_decl);
+        s << BNE << "$t2  " << tag << "  " << "label" << label_base + j + 1 << endl;
+        //need consider the binding DONE
+        emit_push(ACC, s);
+        cgen_ctx->cur_symtab.bindings.push_back(std::make_pair(branch->name, branch->type_decl));
+        branch->expr->code(s);
+        emit_addiu("$sp", "$sp", 4, s);
+        cgen_ctx->cur_symtab.bindings.pop_back();
+        emit_branch(label_last, s);
+
+    }
+    emit_label_def(label_last - 1, s);
+    emit_jal("_case_abort", s);
+    emit_label_def(label_last, s);
+
 }
 
 void block_class::code(ostream &s) {
-    for(int i = body->first(); body->more(i) ; i=body->next(i)){
+    for (int i = body->first(); body->more(i); i = body->next(i)) {
         body->nth(i)->code(s);
     }
 }
 
 void let_class::code(ostream &s) {
-    //add a binding
-    cgen_ctx->cur_symtab.bindings.push_back(identifier);
-    emit_addiu("$sp", "$sp", -4, s);
+    //add a binding.
+
+    //how to get a default value
+    if (type_decl == Bool || type_decl == Int || type_decl == Str) {
+        s << LA;
+        s << ACC << "  ";
+        cgen_ctx->code_default_value_for_type(type_decl);
+        s << endl;
+    } else {
+        emit_load_imm(ACC, 0, s);
+    }
+    init->code(s);
+    emit_push(ACC, s);
+    cgen_ctx->cur_symtab.bindings.push_back(std::make_pair(identifier, type_decl));
     body->code(s);
     emit_addiu("$sp", "$sp", 4, s);
     cgen_ctx->cur_symtab.bindings.pop_back();
@@ -1116,15 +1210,16 @@ void plus_class::code(ostream &s) {
     emit_push("$a0", s);
     e2->code(s);
     emit_load("$t1", 1, "$sp", s); //get t1 from stack
-    emit_addiu("$sp", "$sp", 4, s);  //pop the stack
+    emit_addiu("$sp", "$sp", 4, s); //pop the stack
     emit_load("$t2", 3, "$t1", s);
     emit_load("$t3", 3, "$a0", s);
     emit_add("$t2", "$t2", "$t3", s);
-    emit_store("$t2", 3, "$t1",s);
-    emit_move("$a0","$t1", s);
+    emit_store("$t2", 3, "$t1", s);
+    emit_move("$a0", "$t1", s);
 }
 
 //make a copy of Int, store the result in $a0
+
 void sub_class::code(ostream &s) {
     //e1 e2
     e1->code(s);
@@ -1132,13 +1227,13 @@ void sub_class::code(ostream &s) {
     emit_push("$a0", s);
     e2->code(s);
     emit_load("$t1", 1, "$sp", s); //get t1 from stack
-    emit_addiu("$sp", "$sp", 4, s);  //pop the stack
+    emit_addiu("$sp", "$sp", 4, s); //pop the stack
     emit_load("$t2", 3, "$t1", s);
     emit_load("$t3", 3, "$a0", s);
     emit_sub("$t2", "$t2", "$t3", s);
-    emit_store("$t2", 3, "$t1",s);
-    emit_move("$a0","$t1", s);
-    
+    emit_store("$t2", 3, "$t1", s);
+    emit_move("$a0", "$t1", s);
+
 }
 
 void mul_class::code(ostream &s) {
@@ -1148,12 +1243,12 @@ void mul_class::code(ostream &s) {
     emit_push("$a0", s);
     e2->code(s);
     emit_load("$t1", 1, "$sp", s); //get t1 from stack
-    emit_addiu("$sp", "$sp", 4, s);  //pop the stack
+    emit_addiu("$sp", "$sp", 4, s); //pop the stack
     emit_load("$t2", 3, "$t1", s);
     emit_load("$t3", 3, "$a0", s);
     emit_mul("$t2", "$t2", "$t3", s);
-    emit_store("$t2", 3, "$t1",s);
-    emit_move("$a0","$t1", s);
+    emit_store("$t2", 3, "$t1", s);
+    emit_move("$a0", "$t1", s);
 }
 
 void divide_class::code(ostream &s) {
@@ -1163,18 +1258,34 @@ void divide_class::code(ostream &s) {
     emit_push("$a0", s);
     e2->code(s);
     emit_load("$t1", 1, "$sp", s); //get t1 from stack
-    emit_addiu("$sp", "$sp", 4, s);  //pop the stack
+    emit_addiu("$sp", "$sp", 4, s); //pop the stack
     emit_load("$t2", 3, "$t1", s);
     emit_load("$t3", 3, "$a0", s);
     emit_div("$t2", "$t2", "$t3", s);
-    emit_store("$t2", 3, "$t1",s);
-    emit_move("$a0","$t1", s);
+    emit_store("$t2", 3, "$t1", s);
+    emit_move("$a0", "$t1", s);
 }
 
 void neg_class::code(ostream &s) {
+    e1->code(s);
+    emit_load_imm("$t1", -1, s);
+    emit_mul(ACC, ACC, "$t1", s);
 }
 
 void lt_class::code(ostream &s) {
+    e1->code(s);
+    emit_push(ACC, s);
+    e2->code(s);
+    emit_load("$t1", 1, "$sp", s);
+    emit_addiu("$sp", "$sp", 4, s);
+    emit_move("$t2", "$a0", s);
+
+    emit_load_address("$a0", "bool_const1", s); //default to true
+    emit_load("$t1", 3, "$t1", s); //get the value
+    emit_load("$t2", 3, "$t2", s);
+    emit_blt("$t1", "$t2", ++label_cnt, s);
+    emit_load_address("$a0", "bool_const0", s); //if fall through, false
+    emit_label_def(label_cnt, s);
 }
 
 void eq_class::code(ostream &s) {
@@ -1185,17 +1296,35 @@ void eq_class::code(ostream &s) {
     emit_load("$t1", 1, "$sp", s);
     emit_addiu("$sp", "$sp", 4, s);
     emit_move("$t2", "$a0", s);
-    
-    emit_load_address("$a0", "bool_const1",s); //true
-    emit_load_address("$a1", "bool_const0",s);
+    emit_load_address("$a0", "bool_const1", s); //true
+    emit_load_address("$a1", "bool_const0", s);
     emit_jal("equality_test", s);
-    
+
 }
 
 void leq_class::code(ostream &s) {
+    e1->code(s);
+    emit_push(ACC, s);
+    e2->code(s);
+    emit_load("$t1", 1, "$sp", s);
+    emit_addiu("$sp", "$sp", 4, s);
+    emit_move("$t2", "$a0", s);
+
+    emit_load_address("$a0", "bool_const1", s); //default to true
+    emit_load("$t1", 3, "$t1", s); //get the value
+    emit_load("$t2", 3, "$t2", s);
+    emit_bleq("$t1", "$t2", ++label_cnt, s);
+    emit_load_address("$a0", "bool_const0", s); //if fall through, false
+    emit_label_def(label_cnt, s);
 }
 
 void comp_class::code(ostream &s) {
+    e1->code(s);
+    emit_move("$t1", "$a0", s);
+    emit_load_address("$t2", "bool_const1", s); //true
+    emit_load_address("$a0", "bool_const0", s); //false
+    emit_load_address("$a1", "bool_const1", s);
+    emit_jal("equality_test", s);
 }
 
 void int_const_class::code(ostream& s) {
@@ -1214,19 +1343,39 @@ void bool_const_class::code(ostream& s) {
 }
 
 void new__class::code(ostream &s) {
+
+    s << LA;
+    s << ACC << " ";
+    s << type_name << "_protObj" << endl;
+    emit_jal("Object.copy", s);
+    s << JAL;
+    s << type_name << "_init" << endl;
 }
 
 void isvoid_class::code(ostream &s) {
+    e1->code(s);
+    emit_move("$t1", "$a0", s);
+    emit_load_imm("$t2", 0, s); //true
+    emit_load_address("$a0", "bool_const0", s); //true
+    emit_load_address("$a1", "bool_const1", s);
+    emit_jal("equality_test", s);
 }
 
 void no_expr_class::code(ostream &s) {
 }
 
 void object_class::code(ostream &s) {
-    std::pair<int,int> r = cgen_ctx->cur_symtab.lookup(name);
-    if(r.first==1){
-        emit_load(ACC, r.second+3, "$fp", s);
-    }else if(r.first==2){
-        emit_load(ACC, r.second+1, "$fp", s);
+    if (name == self) {
+        emit_move(ACC, "$s0", s);
+        return;
+    }
+
+    std::pair<int, int> r = cgen_ctx->cur_symtab.lookup(name);
+    if (r.first == 0) {
+        emit_load(ACC, r.second + 3, "$s0", s);
+    } else if (r.first == 1) {
+        emit_load(ACC, r.second + 3, "$fp", s);
+    } else if (r.first == 2) {//bidings
+        emit_load(ACC, -r.second - 1, "$fp", s);
     }
 }
