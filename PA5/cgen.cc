@@ -935,13 +935,27 @@ void CgenClassTable::code_prot_obj() {
 }
 
 void CgenClassTable::code_init_dfs(CgenNodeP root) {
+    
+    
+    //init need two pass, first give default value, second, possible init
     Symbol name = root->get_name();
     str << name << "_init" << LABEL;
     emit_method_intro(str);
     if (name != Object) {
         str << JAL << root->get_parent() << "_init" << endl;
     }
-
+    //first pass
+    for (int i = root->features->first(); root->features->more(i); i = root->features->next(i)) {
+        attr_class *a = dynamic_cast<attr_class *> (root->features->nth(i));
+        if (a) {
+            int offset = attr_table.index_of(root->get_name(), a->name) + 3;
+            str<<LA<<ACC<<" ";
+            code_default_value_for_type(a->type_decl);
+            str<<endl;
+            emit_store("$a0", offset, "$s0", str);
+        }
+    }
+    cur_symtab.init((attr_table.tbl)[name]);
     for (int i = root->features->first(); root->features->more(i); i = root->features->next(i)) {
         attr_class *a = dynamic_cast<attr_class *> (root->features->nth(i));
         if (a) {
@@ -1088,6 +1102,7 @@ void static_dispatch_class::code(ostream &s) {
 
 void dispatch_class::code(ostream &s) {
     //push actual parameters on the stack
+    
     for (int i = actual->first(); actual->more(i); i = actual->next(i)) {
         actual->nth(i)->code(s);
         emit_push(ACC, s);
@@ -1139,6 +1154,7 @@ void loop_class::code(ostream &s) {
     body->code(s);
     emit_branch(begin, s);
     emit_label_def(end, s);
+    emit_load_imm(ACC, 0, s); //loop return void
 
 }
 
@@ -1268,8 +1284,10 @@ void divide_class::code(ostream &s) {
 
 void neg_class::code(ostream &s) {
     e1->code(s);
-    emit_load_imm("$t1", -1, s);
-    emit_mul(ACC, ACC, "$t1", s);
+    emit_jal("Object.copy", s);
+    emit_load("$t1", 3 , ACC, s);
+    emit_sub("$t1", "$zero", "$t1", s);
+    emit_store("$t1", 3, ACC, s);
 }
 
 void lt_class::code(ostream &s) {
@@ -1297,9 +1315,10 @@ void eq_class::code(ostream &s) {
     emit_addiu("$sp", "$sp", 4, s);
     emit_move("$t2", "$a0", s);
     emit_load_address("$a0", "bool_const1", s); //true
+    emit_beq("$t1", "$t2", ++label_cnt, s);
     emit_load_address("$a1", "bool_const0", s);
     emit_jal("equality_test", s);
-
+    emit_label_def(label_cnt, s);
 }
 
 void leq_class::code(ostream &s) {
@@ -1343,16 +1362,31 @@ void bool_const_class::code(ostream& s) {
 }
 
 void new__class::code(ostream &s) {
-
+    
+    
+    Symbol t = type_name;
+    if (type_name == SELF_TYPE) {
+        //get the class tag of $a0
+        emit_load_address("$t1", "class_objTab", s);
+        emit_load("$t2", 0, "$s0", s);
+        emit_sll("$t2", "$t2", 3, s);
+        emit_add("$t1", "$t1", "$t2", s);
+        emit_load(ACC, 0 , "$t1", s);
+        emit_move("$s1", "$t1", s);
+        emit_jal("Object.copy", s);
+        emit_load("$t1", 1, "$s1", s);
+        emit_jalr("$t1", s);
+        return;
+    }
     s << LA;
     s << ACC << " ";
-    s << type_name << "_protObj" << endl;
+    s << t << "_protObj" << endl;
     emit_jal("Object.copy", s);
     s << JAL;
-    s << type_name << "_init" << endl;
+    s << t << "_init" << endl;
 }
 
-void isvoid_class::code(ostream &s) {
+void isvoid_class::code(ostream & s) {
     e1->code(s);
     emit_move("$t1", "$a0", s);
     emit_load_imm("$t2", 0, s); //true
@@ -1361,10 +1395,10 @@ void isvoid_class::code(ostream &s) {
     emit_jal("equality_test", s);
 }
 
-void no_expr_class::code(ostream &s) {
+void no_expr_class::code(ostream & s) {
 }
 
-void object_class::code(ostream &s) {
+void object_class::code(ostream & s) {
     if (name == self) {
         emit_move(ACC, "$s0", s);
         return;
