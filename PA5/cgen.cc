@@ -27,7 +27,7 @@
 #include "symtab.h"
 #include <typeinfo>
 #include <utility>
-
+#include <iostream>
 extern void emit_string_constant(ostream& str, char *s);
 extern int cgen_debug;
 
@@ -111,6 +111,11 @@ static void initialize_constants(void) {
 static char *gc_init_names[] = {"_NoGC_Init", "_GenGC_Init", "_ScnGC_Init"};
 static char *gc_collect_names[] = {"_NoGC_Collect", "_GenGC_Collect", "_ScnGC_Collect"};
 
+static int label_cnt = -1;
+static int case_cnt = -1;
+
+static StringEntry* filename = NULL;
+static Symbol cur_class = NULL;
 
 //  BoolConst is a class that implements code generation for operations
 //  on the two booleans, which are given global names here.
@@ -934,8 +939,9 @@ void CgenClassTable::code_prot_obj() {
     }
 }
 
+
 void CgenClassTable::code_init_dfs(CgenNodeP root) {
-    
+    filename = stringtable.add_string(root->get_filename()->get_string());
     
     //init need two pass, first give default value, second, possible init
     Symbol name = root->get_name();
@@ -953,6 +959,7 @@ void CgenClassTable::code_init_dfs(CgenNodeP root) {
             code_default_value_for_type(a->type_decl);
             str<<endl;
             emit_store("$a0", offset, "$s0", str);
+          
         }
     }
     cur_symtab.init((attr_table.tbl)[name]);
@@ -963,6 +970,7 @@ void CgenClassTable::code_init_dfs(CgenNodeP root) {
             emit_load("$a0", offset, "$s0", str);
             a->init->code(str);
             emit_store("$a0", offset, "$s0", str);
+          
         }
     }
     emit_move("$a0", "$s0", str);
@@ -973,8 +981,7 @@ void CgenClassTable::code_init_dfs(CgenNodeP root) {
     }
 
 }
-static StringEntry* filename = NULL;
-static Symbol cur_class = NULL;
+
 
 void CgenClassTable::code_methods_dfs(CgenNodeP root) {
     filename = stringtable.add_string(root->get_filename()->get_string());
@@ -1063,8 +1070,7 @@ basic_status(bstatus) {
 //   constant integers, strings, and booleans are provided.
 //
 //*****************************************************************
-static int label_cnt = -1;
-static int case_cnt = -1;
+
 
 void assign_class::code(ostream &s) {
     //name <- expr
@@ -1102,6 +1108,7 @@ void static_dispatch_class::code(ostream &s) {
 
 void dispatch_class::code(ostream &s) {
     //push actual parameters on the stack
+
     
     for (int i = actual->first(); actual->more(i); i = actual->next(i)) {
         actual->nth(i)->code(s);
@@ -1403,7 +1410,6 @@ void object_class::code(ostream & s) {
         emit_move(ACC, "$s0", s);
         return;
     }
-
     std::pair<int, int> r = cgen_ctx->cur_symtab.lookup(name);
     if (r.first == 0) {
         emit_load(ACC, r.second + 3, "$s0", s);
